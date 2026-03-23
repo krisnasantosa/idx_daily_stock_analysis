@@ -53,7 +53,7 @@ def run_market_review(
         if override_region is not None
         else (getattr(config, 'market_review_region', 'cn') or 'cn')
     )
-    if region not in ('cn', 'us', 'both'):
+    if region not in ('cn', 'us', 'id', 'both'):
         region = 'cn'
 
     try:
