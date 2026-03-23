@@ -104,6 +104,11 @@ class YfinanceFetcher(BaseFetcher):
         """
         code = stock_code.strip().upper()
 
+        # IDX 印尼股票：.JK 后缀直接透传（如 BBCA.JK → BBCA.JK）
+        if code.endswith('.JK'):
+            logger.debug(f"识别为印尼IDX股票代码: {code}")
+            return code
+
         # 美股指数：映射到 Yahoo Finance 符号（如 SPX -> ^GSPC）
         yf_symbol, _ = get_us_index_yf_symbol(code)
         if yf_symbol:
@@ -617,18 +622,20 @@ class YfinanceFetcher(BaseFetcher):
 
     def get_realtime_quote(self, stock_code: str) -> Optional[UnifiedRealtimeQuote]:
         """
-        获取美股/美股指数实时行情数据
+        获取美股/美股指数/IDX印尼股票实时行情数据
 
-        支持美股股票（AAPL、TSLA）和美股指数（SPX、DJI 等）。
+        支持美股股票（AAPL、TSLA）、美股指数（SPX、DJI 等）和印尼IDX股票（BBCA.JK 等）。
         数据来源：yfinance Ticker.info
 
         Args:
-            stock_code: 美股代码或指数代码，如 'AMD', 'AAPL', 'SPX', 'DJI'
+            stock_code: 股票代码，如 'AMD', 'AAPL', 'SPX', 'DJI', 'BBCA.JK'
 
         Returns:
             UnifiedRealtimeQuote 对象，获取失败返回 None
         """
         import yfinance as yf
+
+        from .base import is_idx_stock_code
 
         # 美股指数：使用映射（SPX -> ^GSPC）
         yf_symbol, index_name = get_us_index_yf_symbol(stock_code)
@@ -639,14 +646,36 @@ class YfinanceFetcher(BaseFetcher):
                 index_name=index_name,
             )
 
+        # IDX 印尼股票：.JK 后缀，直接使用 yfinance
+        if is_idx_stock_code(stock_code):
+            return self._get_yf_realtime_quote(stock_code.strip().upper())
+
         # 仅处理美股股票
         if not self._is_us_stock(stock_code):
             logger.debug(f"[Yfinance] {stock_code} 不是美股，跳过")
             return None
 
+        return self._get_yf_realtime_quote(stock_code.strip().upper(), stooq_fallback=True)
+
+    def _get_yf_realtime_quote(
+        self,
+        symbol: str,
+        stooq_fallback: bool = False,
+    ) -> Optional[UnifiedRealtimeQuote]:
+        """
+        通过 yfinance 获取股票实时行情（通用，支持美股和 IDX 印尼股票）。
+
+        Args:
+            symbol: Yahoo Finance 格式代码，如 'AAPL' 或 'BBCA.JK'
+            stooq_fallback: 失败时是否尝试 Stooq 兜底（仅对美股有意义）
+
+        Returns:
+            UnifiedRealtimeQuote 对象，获取失败返回 None
+        """
+        import yfinance as yf
+
         try:
-            symbol = stock_code.strip().upper()
-            logger.debug(f"[Yfinance] 获取美股 {symbol} 实时行情")
+            logger.debug(f"[Yfinance] 获取 {symbol} 实时行情")
 
             ticker = yf.Ticker(symbol)
 
@@ -669,8 +698,11 @@ class YfinanceFetcher(BaseFetcher):
                 logger.debug("[Yfinance] fast_info 失败，尝试 history 方法")
                 hist = ticker.history(period='2d')
                 if hist.empty:
-                    logger.warning(f"[Yfinance] 无法获取 {symbol} 的数据，尝试 Stooq 兜底")
-                    return self._get_us_stock_quote_from_stooq(symbol)
+                    if stooq_fallback:
+                        logger.warning(f"[Yfinance] 无法获取 {symbol} 的数据，尝试 Stooq 兜底")
+                        return self._get_us_stock_quote_from_stooq(symbol)
+                    logger.warning(f"[Yfinance] 无法获取 {symbol} 的数据")
+                    return None
 
                 today = hist.iloc[-1]
                 prev = hist.iloc[-2] if len(hist) > 1 else today
@@ -724,12 +756,15 @@ class YfinanceFetcher(BaseFetcher):
                 circ_mv=None,
             )
 
-            logger.info(f"[Yfinance] 获取美股 {symbol} 实时行情成功: 价格={price}")
+            logger.info(f"[Yfinance] 获取 {symbol} 实时行情成功: 价格={price}")
             return quote
 
         except Exception as e:
-            logger.warning(f"[Yfinance] 获取美股 {stock_code} 实时行情失败: {e}，尝试 Stooq 兜底")
-            return self._get_us_stock_quote_from_stooq(stock_code)
+            if stooq_fallback:
+                logger.warning(f"[Yfinance] 获取 {symbol} 实时行情失败: {e}，尝试 Stooq 兜底")
+                return self._get_us_stock_quote_from_stooq(symbol)
+            logger.warning(f"[Yfinance] 获取 {symbol} 实时行情失败: {e}")
+            return None
 
 
 if __name__ == "__main__":

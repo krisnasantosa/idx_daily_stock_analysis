@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### 新功能
+
+- 🇮🇩 **印尼 IDX 股票支持** — 新增对印尼证券交易所（IDX）股票的支持，使用 Yahoo Finance `.JK` 后缀格式（如 `BBCA.JK`、`TLKM.JK`）。现在可以在 `STOCK_LIST` 中直接加入 IDX 股票代码，系统会自动路由到 YFinance 数据源进行历史数据获取与近实时行情查询（数据延迟约 15 分钟）。新增 `IDX_POLL_INTERVAL_SECONDS` 环境变量控制轮询间隔（默认 5 分钟，建议不超过 10 分钟）。详见 [`docs/IDX_SUPPORT.md`](docs/IDX_SUPPORT.md)。
+
 ### 改进
 
 - 🖥️ **Dashboard 面板统一化（PR7-2）** — 新增 `DashboardPanelHeader` 和 `DashboardStateBlock` 作为历史、报告、资讯、任务和透明度等面板的通用组件；统一了各面板标题层级、加载/空态/错误态和 CSS 变量 token。
