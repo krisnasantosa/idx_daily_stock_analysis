@@ -107,7 +107,7 @@ class MarketAnalyzer:
         self.search_service = search_service
         self.analyzer = analyzer
         self.data_manager = DataFetcherManager()
-        self.region = region if region in ("cn", "us") else "cn"
+        self.region = region if region in ("cn", "us", "id") else "cn"
         self.profile: MarketProfile = get_profile(self.region)
         self.strategy = get_market_strategy_blueprint(self.region)
 
@@ -255,8 +255,13 @@ class MarketAnalyzer:
         try:
             logger.info("[大盘] 开始搜索市场新闻...")
             
-            # 根据 region 设置搜索上下文名称，避免美股搜索被解读为 A 股语境
-            market_name = "大盘" if self.region == "cn" else "US market"
+            # 根据 region 设置搜索上下文名称，避免跨市场搜索语境混淆
+            if self.region == "cn":
+                market_name = "大盘"
+            elif self.region == "id":
+                market_name = "IDX Indonesia market"
+            else:
+                market_name = "US market"
             for query in search_queries:
                 response = self.search_service.search_stock_news(
                     stock_code="market",
@@ -421,24 +426,26 @@ class MarketAnalyzer:
                 snippet = n.get('snippet', '')[:100]
             news_text += f"{i}. {title}\n   {snippet}\n"
         
-        # 按 region 组装市场概况与板块区块（美股无涨跌家数、板块数据）
+        # 按 region 组装市场概况与板块区块（美股/IDX无涨跌家数、板块数据）
         stats_block = ""
         sector_block = ""
-        if self.region == "us":
+        if self.region in ("us", "id"):
             if self.profile.has_market_stats:
                 stats_block = f"""## Market Overview
 - Up: {overview.up_count} | Down: {overview.down_count} | Flat: {overview.flat_count}
 - Limit up: {overview.limit_up_count} | Limit down: {overview.limit_down_count}
 - Total volume (CNY bn): {overview.total_amount:.0f}"""
             else:
-                stats_block = "## Market Overview\n(US market has no equivalent advance/decline stats.)"
+                market_label_en = "US" if self.region == "us" else "IDX"
+                stats_block = f"## Market Overview\n({market_label_en} market has no equivalent advance/decline stats.)"
 
             if self.profile.has_sector_rankings:
                 sector_block = f"""## Sector Performance
 Leading: {top_sectors_text if top_sectors_text else "N/A"}
 Lagging: {bottom_sectors_text if bottom_sectors_text else "N/A"}"""
             else:
-                sector_block = "## Sector Performance\n(US sector data not available.)"
+                market_label_en = "US" if self.region == "us" else "IDX"
+                sector_block = f"## Sector Performance\n({market_label_en} sector data not available.)"
         else:
             if self.profile.has_market_stats:
                 stats_block = f"""## 市场概况
@@ -455,16 +462,80 @@ Lagging: {bottom_sectors_text if bottom_sectors_text else "N/A"}"""
             else:
                 sector_block = "## 板块表现\n（美股暂无板块涨跌数据）"
 
-        data_no_indices_hint = (
-            "注意：由于行情数据获取失败，请主要根据【市场新闻】进行定性分析和总结，不要编造具体的指数点位。"
-            if not indices_text
-            else ""
-        )
-        indices_placeholder = indices_text if indices_text else ("No index data (API error)" if self.region == "us" else "暂无指数数据（接口异常）")
-        news_placeholder = news_text if news_text else ("No relevant news" if self.region == "us" else "暂无相关新闻")
+        # IDX Indonesia — English prompt
+        if self.region == "id":
+            indices_placeholder = indices_text if indices_text else "No index data (API error)"
+            news_placeholder = news_text if news_text else "No relevant news"
+            data_no_indices_hint_en = (
+                "Note: Market data fetch failed. Rely mainly on [Market News] for qualitative analysis. Do not invent index levels."
+                if not indices_text
+                else ""
+            )
+            return f"""You are a professional Indonesia (IDX) stock market analyst. Please produce a concise IDX market recap report based on the data below.
+
+[Requirements]
+- Output pure Markdown only
+- No JSON
+- No code blocks
+- Use emoji sparingly in headings (at most one per heading)
+
+---
+
+# Today's Market Data
+
+## Date
+{overview.date}
+
+## Major Indices
+{indices_placeholder}
+
+{stats_block}
+
+{sector_block}
+
+## Market News
+{news_placeholder}
+
+{data_no_indices_hint_en}
+
+{self.strategy.to_prompt_block()}
+
+---
+
+# Output Template (follow this structure)
+
+## {overview.date} IDX Market Recap
+
+### 1. Market Summary
+(2-3 sentences on overall IDX market performance, IHSG moves, volume)
+
+### 2. Index Commentary
+({self.profile.prompt_index_hint})
+
+### 3. Fund Flows
+(Interpret foreign net buy/sell and volume implications)
+
+### 4. Sector/Theme Highlights
+(Analyze drivers behind leading/lagging IDX sectors)
+
+### 5. Outlook
+(Short-term view based on price action and news)
+
+### 6. Risk Alerts
+(Key risks to watch: BI rate, IDR/USD, commodity prices)
+
+### 7. Strategy Plan
+(Provide risk-on/neutral/risk-off stance, position sizing guideline, and one invalidation trigger.)
+
+---
+
+Output the report content directly, no extra commentary.
+"""
 
         # 美股场景使用英文提示语，便于生成更符合美股语境的报告
         if self.region == "us":
+            indices_placeholder = indices_text if indices_text else "No index data (API error)"
+            news_placeholder = news_text if news_text else "No relevant news"
             data_no_indices_hint_en = (
                 "Note: Market data fetch failed. Rely mainly on [Market News] for qualitative analysis. Do not invent index levels."
                 if not indices_text
@@ -532,6 +603,13 @@ Output the report content directly, no extra commentary.
 """
 
         # A 股场景使用中文提示语
+        indices_placeholder = indices_text if indices_text else "暂无指数数据（接口异常）"
+        news_placeholder = news_text if news_text else "暂无相关新闻"
+        data_no_indices_hint = (
+            "注意：由于行情数据获取失败，请主要根据【市场新闻】进行定性分析和总结，不要编造具体的指数点位。"
+            if not indices_text
+            else ""
+        )
         return f"""你是一位专业的A/H/美股市场分析师，请根据以下数据生成一份简洁的大盘复盘报告。
 
 【重要】输出要求：
@@ -599,6 +677,7 @@ Output the report content directly, no extra commentary.
         # 根据 mood_index_code 查找对应指数
         # cn: mood_code="000001"，idx.code 可能为 "sh000001"（以 mood_code 结尾）
         # us: mood_code="SPX"，idx.code 直接为 "SPX"
+        # id: mood_code="^JKSE"，idx.code 直接为 "^JKSE"
         mood_index = next(
             (
                 idx
@@ -609,15 +688,15 @@ Output the report content directly, no extra commentary.
         )
         if mood_index:
             if mood_index.change_pct > 1:
-                market_mood = "强势上涨"
+                market_mood = "strongly rising" if self.region == "id" else "强势上涨"
             elif mood_index.change_pct > 0:
-                market_mood = "小幅上涨"
+                market_mood = "slightly rising" if self.region == "id" else "小幅上涨"
             elif mood_index.change_pct > -1:
-                market_mood = "小幅下跌"
+                market_mood = "slightly falling" if self.region == "id" else "小幅下跌"
             else:
-                market_mood = "明显下跌"
+                market_mood = "declining" if self.region == "id" else "明显下跌"
         else:
-            market_mood = "震荡整理"
+            market_mood = "mixed/consolidating" if self.region == "id" else "震荡整理"
         
         # 指数行情（简洁格式）
         indices_text = ""
@@ -629,7 +708,7 @@ Output the report content directly, no extra commentary.
         top_text = "、".join([s['name'] for s in overview.top_sectors[:3]])
         bottom_text = "、".join([s['name'] for s in overview.bottom_sectors[:3]])
         
-        # 按 region 决定是否包含涨跌统计和板块（美股无）
+        # 按 region 决定是否包含涨跌统计和板块（美股/IDX无）
         stats_section = ""
         if self.profile.has_market_stats:
             stats_section = f"""
@@ -649,9 +728,40 @@ Output the report content directly, no extra commentary.
 - **领涨**: {top_text}
 - **领跌**: {bottom_text}
 """
-        market_label = "A股" if self.region == "cn" else "美股"
+        if self.region == "cn":
+            market_label = "A股"
+        elif self.region == "id":
+            market_label = "IDX Indonesia"
+        else:
+            market_label = "美股"
         strategy_summary = self.strategy.to_markdown_block()
-        report = f"""## {overview.date} 大盘复盘
+
+        if self.region == "id":
+            report = f"""## {overview.date} IDX Market Recap
+
+### 1. Market Summary
+Today's IDX market is showing a **{market_mood}** trend.
+
+### 2. Major Indices
+{indices_text}
+{stats_section}
+{sector_section}
+### 3. Fund Flows
+(Foreign net buy/sell data unavailable in template mode.)
+
+### 4. Sector/Theme Highlights
+(Sector data unavailable in template mode.)
+
+### 5. Risk Alerts
+Market involves risk; invest prudently. Data for reference only, not investment advice.
+
+{strategy_summary}
+
+---
+*Report time: {datetime.now().strftime('%H:%M')}*
+"""
+        else:
+            report = f"""## {overview.date} 大盘复盘
 
 ### 一、市场总结
 今日{market_label}市场整体呈现**{market_mood}**态势。

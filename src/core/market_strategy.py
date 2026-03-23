@@ -130,6 +130,56 @@ US_BLUEPRINT = MarketStrategyBlueprint(
 )
 
 
+IDX_BLUEPRINT = MarketStrategyBlueprint(
+    region="id",
+    title="IDX Indonesia Market Strategy",
+    positioning="Focus on IHSG trend, foreign fund flows, and sector rotation to define next-session risk posture.",
+    principles=[
+        "Read market regime from IHSG, LQ45, and IDX30 alignment first.",
+        "Monitor foreign net buy/sell flow as a leading sentiment indicator.",
+        "Translate recap into actionable risk-on/risk-off stance with clear invalidation points.",
+    ],
+    dimensions=[
+        StrategyDimension(
+            name="Trend Regime",
+            objective="Classify the market as momentum, range, or risk-off.",
+            checkpoints=[
+                "Are IHSG/LQ45/IDX30 directionally aligned",
+                "Did volume confirm the move",
+                "Are key IHSG support/resistance levels reclaimed or lost",
+            ],
+        ),
+        StrategyDimension(
+            name="Macro & Flows",
+            objective="Map BI rate policy and foreign fund flows into equity risk appetite.",
+            checkpoints=[
+                "Bank Indonesia rate and IDR/USD implications",
+                "Foreign net buy/sell flow at IDX",
+                "Commodity prices impact (palm oil, coal, nickel) on related sectors",
+            ],
+        ),
+        StrategyDimension(
+            name="Sector Themes",
+            objective="Identify persistent leaders and vulnerable laggards.",
+            checkpoints=[
+                "Banking sector (BBCA, BBRI, BMRI) trend and credit growth",
+                "Commodity and energy sector sensitivity to global prices",
+                "Consumer staples and telco defensive stability",
+            ],
+        ),
+    ],
+    action_framework=[
+        "Risk-on: IHSG breakout with expanding foreign buying and volume.",
+        "Neutral: mixed index signals; focus on selective sector relative strength.",
+        "Risk-off: IHSG breakdown with foreign selling pressure; prioritize capital preservation.",
+    ],
+)
+
+
 def get_market_strategy_blueprint(region: str) -> MarketStrategyBlueprint:
     """Return strategy blueprint by market region."""
-    return US_BLUEPRINT if region == "us" else CN_BLUEPRINT
+    if region == "us":
+        return US_BLUEPRINT
+    if region in ("id", "idx"):
+        return IDX_BLUEPRINT
+    return CN_BLUEPRINT
