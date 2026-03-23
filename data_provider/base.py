@@ -111,11 +111,35 @@ def normalize_stock_code(stock_code: str) -> str:
             return f"HK{base.zfill(5)}"
         if suffix.upper() in ('SH', 'SZ', 'SS', 'BJ') and base.isdigit():
             return base
+        # IDX Indonesia (.JK suffix): keep as-is (e.g. BBCA.JK -> BBCA.JK)
+        if suffix.upper() == 'JK':
+            return code
 
     return code
 
 
 ETF_PREFIXES = ("51", "52", "56", "58", "15", "16", "18")
+
+
+def is_idx_stock_code(code: str) -> bool:
+    """
+    判断是否为印尼股市（IDX）股票代码。
+
+    IDX 股票使用 Yahoo Finance 的 .JK 后缀格式，例如 BBCA.JK、TLKM.JK。
+
+    Args:
+        code: 股票代码，如 'BBCA.JK'
+
+    Returns:
+        True 表示是印尼股市（IDX）代码，否则 False
+
+    Examples:
+        >>> is_idx_stock_code('BBCA.JK')
+        True
+        >>> is_idx_stock_code('AAPL')
+        False
+    """
+    return (code or "").strip().upper().endswith(".JK")
 
 
 def _is_us_market(code: str) -> bool:
@@ -155,7 +179,9 @@ def _is_etf_code(code: str) -> bool:
 
 
 def _market_tag(code: str) -> str:
-    """返回市场标签: cn/us/hk."""
+    """返回市场标签: cn/us/hk/idx."""
+    if is_idx_stock_code(code):
+        return "idx"
     if _is_us_market(code):
         return "us"
     if _is_hk_market(code):
@@ -825,6 +851,42 @@ class DataFetcherManager:
         errors = []
         total_fetchers = len(self._fetchers)
         request_start = time.time()
+
+        # 快速路径：IDX 印尼股票直接路由到 YfinanceFetcher
+        if is_idx_stock_code(stock_code):
+            for attempt, fetcher in enumerate(self._fetchers, start=1):
+                if fetcher.name == "YfinanceFetcher":
+                    try:
+                        logger.info(
+                            f"[数据源尝试 {attempt}/{total_fetchers}] [{fetcher.name}] "
+                            f"IDX印尼股票 {stock_code} 直接路由..."
+                        )
+                        df = fetcher.get_daily_data(
+                            stock_code=stock_code,
+                            start_date=start_date,
+                            end_date=end_date,
+                            days=days,
+                        )
+                        if df is not None and not df.empty:
+                            elapsed = time.time() - request_start
+                            logger.info(
+                                f"[数据源完成] {stock_code} 使用 [{fetcher.name}] 获取成功: "
+                                f"rows={len(df)}, elapsed={elapsed:.2f}s"
+                            )
+                            return df, fetcher.name
+                    except Exception as e:
+                        error_type, error_reason = summarize_exception(e)
+                        error_msg = f"[{fetcher.name}] ({error_type}) {error_reason}"
+                        logger.warning(
+                            f"[数据源失败 {attempt}/{total_fetchers}] [{fetcher.name}] {stock_code}: "
+                            f"error_type={error_type}, reason={error_reason}"
+                        )
+                        errors.append(error_msg)
+                    break
+            error_summary = f"IDX印尼股票 {stock_code} 获取失败:\n" + "\n".join(errors)
+            elapsed = time.time() - request_start
+            logger.error(f"[数据源终止] {stock_code} 获取失败: elapsed={elapsed:.2f}s\n{error_summary}")
+            raise DataFetchError(error_summary)
 
         # 快速路径：美股指数与美股股票直接路由到 YfinanceFetcher
         if is_us_index_code(stock_code) or is_us_stock_code(stock_code):
